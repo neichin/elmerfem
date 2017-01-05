@@ -3517,15 +3517,16 @@ END SUBROUTINE GetMaxDefs
     TYPE(Matrix_t), POINTER :: Projector
     LOGICAL :: Success
 !------------------------------------------------------------------------------
-    INTEGER :: i,j,k,l,m,n,n1,n2,k1,k2,ind,Constraint,DIM
+    INTEGER :: i,j,k,l,m,n,n1,n2,k1,k2,ind,Constraint,DIM,ii,jj,kk
     TYPE(Element_t), POINTER :: Element, Left, Right, Elements(:)
     LOGICAL :: ThisActive, TargetActive
     INTEGER, POINTER :: NodeIndexes(:), Perm1(:), Perm2(:), PPerm(:)
     TYPE(Mesh_t), POINTER ::  BMesh1, BMesh2, PMesh
-    LOGICAL :: OnTheFlyBC, CheckForHalo, NarrowHalo, NoHalo, Found
+    LOGICAL :: OnTheFlyBC, CheckForHalo, NarrowHalo, NoHalo, SplitQuadratic, Found
 
     TYPE(Element_t), POINTER :: Parent,q
-    INTEGER :: en, in, HaloCount, ActiveCount
+    INTEGER :: en, in, HaloCount, ActiveCount, ElemCode, nSplit
+    INTEGER :: SplitMap(4), SplitSizes(5)
     LOGICAL, ALLOCATABLE :: ActiveNode(:)
 
     CALL Info('CreateInterfaceMeshes','Making a list of elements at interface',Level=9)
@@ -3538,6 +3539,17 @@ END SUBROUTINE GetMaxDefs
     ! Interface meshes consist of boundary elements only    
     Elements => Mesh % Elements( Mesh % NumberOfBulkElements+1: )
 
+
+    
+    SplitQuadratic = ListGetLogical( Model % Simulation,'Mortar BCs Split Quadratic',Found ) 
+    IF( Mesh % NumberOfFaces > 0 .OR. Mesh % NumberOfEdges > 0 ) THEN
+      SplitQuadratic = .FALSE.
+    END IF
+    IF( SplitQuadratic ) CALL Info('CreateInterfaceMeshes',&
+        'Quadratic elements will be split',Level=7)
+    
+      
+    
     ! If the target is larger than number of BCs givem then 
     ! it has probably been created on-the-fly from a discontinuous boundary.
     OnTheFlyBC = ( Trgt > Model % NumberOfBCs )
@@ -3616,14 +3628,24 @@ END SUBROUTINE GetMaxDefs
     HaloCount = 0
     DO i=1, Mesh % NumberOfBoundaryElements
       Element => Elements(i)
-      IF (Element % TYPE % ElementCode<=200) CYCLE
+      ElemCode = Element % Type % ElementCode 
+      IF (ElemCode<=200) CYCLE
+
+      nSplit = 1
+      IF( SplitQuadratic ) THEN
+        IF( ElemCode == 306 .OR. ElemCode == 409 ) THEN
+          nSplit = 4
+        ELSE IF( ElemCode == 408 ) THEN
+          nSplit = 5
+        END IF
+      END IF
 
       Constraint = Element % BoundaryInfo % Constraint
       IF( Model % BCs(This) % Tag == Constraint ) THEN
         IF( CheckForHalo ) THEN
           IF( NarrowHalo ) THEN
             IF( ANY(ActiveNode(Element % NodeIndexes) ) ) THEN
-              n1 = n1 + 1
+              n1 = n1 + nSplit
             ELSE
               HaloCount = HaloCount + 1
             END IF
@@ -3639,20 +3661,20 @@ END SUBROUTINE GetMaxDefs
                   ( Right % PartIndex == ParEnv % MyPe ) 
             END IF
             IF( ThisActive ) THEN
-              n1 = n1 + 1
+              n1 = n1 + nSplit
             ELSE
               HaloCount = HaloCount + 1
             END IF
           END IF
         ELSE
-          n1 = n1 + 1
+           n1 = n1 + nSplit
         END IF
       END IF
 
       IF( OnTheFlyBC ) THEN
-        IF( Trgt == Constraint ) n2 = n2 + 1
+        IF( Trgt == Constraint ) n2 = n2 + nSplit
       ELSE
-        IF ( Model % BCs(Trgt) % Tag == Constraint ) n2 = n2 + 1
+        IF ( Model % BCs(Trgt) % Tag == Constraint ) n2 = n2 + nSplit
       END IF
     END DO
 
@@ -3675,6 +3697,9 @@ END SUBROUTINE GetMaxDefs
     BMesh1 % Parent => Mesh
     BMesh2 % Parent => Mesh
 
+    WRITE(Message,'(A,I0,A,I0)') 'Number of interface elements: ',n1,', ',n2
+    CALL Info('CreateInterfaceMeshes',Message,Level=9)    
+    
     CALL AllocateVector( BMesh1 % Elements,n1 )
     CALL AllocateVector( BMesh2 % Elements,n2 )
     CALL AllocateVector( Perm1, Mesh % NumberOfNodes )
@@ -3695,6 +3720,18 @@ END SUBROUTINE GetMaxDefs
     DO i=1, Mesh % NumberOfBoundaryElements
       Element => Elements(i)
       
+      ElemCode = Element % Type % ElementCode 
+      IF (ElemCode <= 200) CYCLE
+
+      nSplit = 1
+      IF( SplitQuadratic ) THEN
+        IF( ElemCode == 306 .OR. ElemCode == 409 ) THEN
+          nSplit = 4
+        ELSE IF( ElemCode == 408 ) THEN
+          nSplit = 5
+        END IF
+      END IF
+       
       Constraint = Element % BoundaryInfo % Constraint
       
       ThisActive = ( Model % BCs(This) % Tag == Constraint ) 
@@ -3728,58 +3765,146 @@ END SUBROUTINE GetMaxDefs
       ! Set the pointers accordingly so we need to code the complex stuff
       ! only once.
       IF ( ThisActive ) THEN
-        n1 = n1 + 1
+        n1 = n1 + nSplit
         ind = n1
         PMesh => BMesh1
         PPerm => Perm1
       ELSE
-        n2 = n2 + 1
+        n2 = n2 + nSplit
         ind = n2
         PMesh => BMesh2
         PPerm => Perm2
       END IF
 
-      n = Element % TYPE % NumberOfNodes             
-      PMesh % MaxElementNodes = MAX( PMesh % MaxElementNodes, n )
-      PMesh % Elements(ind) = Element
+      
+      IF( nSplit > 1 ) THEN
+        IF( ElemCode == 408 ) THEN
+          SplitSizes(1:nSplit) = (/ 4,3,3,3,3 /)
+          DO ii=1,nSplit
+            jj = ind-nSplit+ii
+            m = SplitSizes(ii)
+            
+            SELECT CASE (ii)
+            CASE( 1 )
+              SplitMap(1:m) = (/ 5,6,7,8 /)
+            CASE( 2 )
+              SplitMap(1:m) = (/ 1, 5, 8 /)
+            CASE( 3 ) 
+              SplitMap(1:m) = (/ 2, 6, 5 /)
+            CASE( 4 )
+              SplitMap(1:m) = (/ 3, 7, 6 /)
+            CASE( 5 ) 
+              SplitMap(1:m) = (/ 4, 8, 7 /)
+            END SELECT
 
-      CALL AllocateVector(PMesh % Elements(ind) % NodeIndexes,n )
+            CALL AllocateVector(PMesh % Elements(jj) % NodeIndexes, m )
+            PMesh % Elements(jj) % NodeIndexes(1:m) = &
+                Element % NodeIndexes(SplitMap(1:m))
+            PMesh % Elements(jj) % TYPE => GetElementType(101*m)
+            IF( ThisActive ) THEN
+              PMesh % Elements(jj) % BoundaryInfo => Element % BoundaryInfo 
+            END IF
+          END DO          
+          PMesh % MaxElementNodes = MAX( PMesh % MaxElementNodes, 4 )
 
-      IF( Mesh % NumberOfFaces == 0 .OR. Mesh % NumberOfEdges == 0 ) THEN
-        PMesh % Elements(ind) % NodeIndexes(1:n) = Element % NodeIndexes(1:n)
+        ELSE IF( ElemCode == 409 ) THEN
+          SplitSizes(1:n) = (/ 4,4,4,4 /)
+          DO ii=1,nSplit
+            jj = ind-nSplit+ii
+            m = SplitSizes(ii)
+            
+            SELECT CASE (ii)
+            CASE( 1 )
+              SplitMap(1:m) = (/ 1, 5, 9, 8 /)
+            CASE( 2 )
+              SplitMap(1:m) = (/ 2, 6, 9, 5 /)
+            CASE( 3 ) 
+              SplitMap(1:m) = (/ 3, 7, 9, 6 /)
+            CASE( 4 ) 
+              SplitMap(1:m) = (/ 4, 8, 9, 7 /)
+            END SELECT
 
+            CALL AllocateVector(PMesh % Elements(jj) % NodeIndexes, m )
+            PMesh % Elements(jj) % NodeIndexes(1:m) = &
+                Element % NodeIndexes(SplitMap(1:m))
+            PMesh % Elements(jj) % TYPE => GetElementType(101*m)
+            IF( ThisActive ) THEN
+              PMesh % Elements(jj) % BoundaryInfo => Element % BoundaryInfo 
+            END IF
+          END DO
+          PMesh % MaxElementNodes = MAX( PMesh % MaxElementNodes, 4 )
+          
+        ELSE IF( ElemCode == 306 ) THEN
+          SplitSizes(1:n) = (/ 3,3,3,3 /)
+          DO ii=1,nSplit
+            jj = ind-nSplit+ii
+            m = SplitSizes(ii)
+            
+            SELECT CASE (ii)
+            CASE( 1 )
+              SplitMap(1:m) = (/ 1, 4, 6 /)
+            CASE( 2 )
+              SplitMap(1:m) = (/ 2, 5, 4 /)
+            CASE( 3 ) 
+              SplitMap(1:m) = (/ 3, 6, 5 /)
+            CASE( 4 ) 
+              SplitMap(1:m) = (/ 4, 5, 6 /)
+            END SELECT
+
+            CALL AllocateVector(PMesh % Elements(j) % NodeIndexes, m )
+            PMesh % Elements(jj) % NodeIndexes(1:m) = &
+                Element % NodeIndexes(SplitMap(1:m))
+            PMesh % Elements(jj) % TYPE => GetElementType(101*m)
+            IF( ThisActive ) THEN
+              PMesh % Elements(jj) % BoundaryInfo => Element % BoundaryInfo 
+            END IF
+          END DO
+          PMesh % MaxElementNodes = MAX( PMesh % MaxElementNodes, 3 )
+        END IF
+        n = Element % TYPE % NumberOfNodes             
         PPerm( Element % NodeIndexes(1:n) ) = 1
+
       ELSE
-        ! If we have edge dofs we want the face element be associated with the 
-        ! face list since that only has properly defined edge indexes.
-        Parent => Element % BoundaryInfo % Left
-        IF(.NOT. ASSOCIATED( Parent ) ) THEN
-          Parent => Element % BoundaryInfo % Right
+        n = Element % TYPE % NumberOfNodes             
+        PMesh % MaxElementNodes = MAX( PMesh % MaxElementNodes, n )
+        PMesh % Elements(ind) = Element
+        CALL AllocateVector(PMesh % Elements(ind) % NodeIndexes,n )
+      
+        IF( Mesh % NumberOfFaces == 0 .OR. Mesh % NumberOfEdges == 0 ) THEN
+          PMesh % Elements(ind) % NodeIndexes(1:n) = Element % NodeIndexes(1:n)
+          PPerm( Element % NodeIndexes(1:n) ) = 1
+        ELSE
+          ! If we have edge dofs we want the face element be associated with the 
+          ! face list since that only has properly defined edge indexes.
+          Parent => Element % BoundaryInfo % Left
+          IF(.NOT. ASSOCIATED( Parent ) ) THEN
+            Parent => Element % BoundaryInfo % Right
+          END IF
+
+          q => Find_Face(Parent,Element)
+
+          PMesh % Elements(ind) % NodeIndexes(1:n) = q % NodeIndexes(1:n)
+
+          ! set the elementindex to be faceindex as it may be needed
+          ! for the edge elements.
+          PMesh % Elements(ind) % ElementIndex = q % ElementIndex
+
+          IF(ASSOCIATED(q % Pdefs)) THEN
+            ALLOCATE(Pmesh % Elements(ind) % Pdefs)
+            PMesh % Elements(ind) % PDefs = q % Pdefs
+          END IF
+
+          ! Set also the owner partition
+          !       PMesh % Elements(ind) % PartIndex = q % PartIndex
+
+          en = q % TYPE % NumberOfEdges
+          ALLOCATE(PMesh % Elements(ind) % EdgeIndexes(en))
+          Pmesh % Elements(ind) % EdgeIndexes(1:en) = q % EdgeIndexes(1:en)
+
+          PPerm( q % NodeIndexes(1:n) ) = 1
         END IF
-
-        q => Find_Face(Parent,Element)
-
-        PMesh % Elements(ind) % NodeIndexes(1:n) = q % NodeIndexes(1:n)
-
-        ! set the elementindex to be faceindex as it may be needed
-        ! for the edge elements.
-        PMesh % Elements(ind) % ElementIndex = q % ElementIndex
-
-        IF(ASSOCIATED(q % Pdefs)) THEN
-          ALLOCATE(Pmesh % Elements(ind) % Pdefs)
-          PMesh % Elements(ind) % PDefs = q % Pdefs
-        END IF
-
-        ! Set also the owner partition
-!       PMesh % Elements(ind) % PartIndex = q % PartIndex
-
-        en = q % TYPE % NumberOfEdges
-        ALLOCATE(PMesh % Elements(ind) % EdgeIndexes(en))
-        Pmesh % Elements(ind) % EdgeIndexes(1:en) = q % EdgeIndexes(1:en)
-
-        PPerm( q % NodeIndexes(1:n) ) = 1
       END IF
-
+        
 
     END DO
   
@@ -3798,7 +3923,7 @@ END SUBROUTINE GetMaxDefs
       CALL Fatal('CreateInterfaceMeshes','No active nodes on periodic boundary!')
     END IF
 
-    WRITE(Message,'(A,I0,A,I0)') 'Number of periodic nodes: ',&
+    WRITE(Message,'(A,I0,A,I0)') 'Number of interface nodes: ',&
         BMesh1 % NumberOfNodes, ', ',BMesh2 % NumberOfNOdes
     CALL Info('CreateInterfaceMeshes',Message,Level=9)    
     
@@ -6453,7 +6578,8 @@ END SUBROUTINE GetMaxDefs
 
       TimestepVar => VariableGet( Mesh % Variables,'Timestep',ThisOnly=.TRUE. )
       Timestep = NINT( TimestepVar % Values(1) )
- 
+
+      
       n = Mesh % MaxElementNodes
       ALLOCATE( Nodes % x(n), Nodes % y(n), Nodes % z(n), &
           NodesM % x(n), NodesM % y(n), NodesM % z(n), &
@@ -9130,8 +9256,11 @@ END SUBROUTINE GetMaxDefs
 
     IF( GotNormal ) THEN
       CALL TangentDirections( Normal,Tangent1,Tangent2 )
+    ELSE
+      CALL Info('AxialInterfaceMeshes',&
+          'Assuming axial interface to have z-axis the normal!',Level=8)
     END IF
-
+    
     ! Go trough master (k=1) and target mesh (k=2)
     !--------------------------------------------
     FullCircle = .FALSE.
@@ -9693,7 +9822,8 @@ END SUBROUTINE GetMaxDefs
     REAL(KIND=dp) :: rowsum, dia, val
     INTEGER, POINTER :: IntInvPerm(:)
     LOGICAL :: GlobalInds
-
+    INTEGER, POINTER :: GlobalDofs(:)
+    
     IF(.NOT.ASSOCIATED(Projector)) RETURN
     
     IF( PRESENT( InvPerm ) ) THEN
@@ -9711,18 +9841,54 @@ END SUBROUTINE GetMaxDefs
       IF( PRESENT( Parallel ) ) GlobalInds = Parallel
     END IF
 
+    IF( GlobalInds ) THEN
+      NULLIFY( GlobalDofs ) 
+      IF( ASSOCIATED( CurrentModel % Solver % Matrix ) ) THEN
+        GlobalDofs => CurrentModel % Solver % Matrix % ParallelInfo % GlobalDofs
+      END IF
+      IF(.NOT. ASSOCIATED( GlobalDofs ) ) THEN
+        CALL Info('SaveProjector','Cannot find GlobalDofs for Solver matrix')
+        GlobalDofs => CurrentModel % Mesh % ParallelInfo % GlobalDofs
+      END IF
+    END IF
+          
     OPEN(1,FILE=FileName,STATUS='Unknown')    
     DO i=1,projector % numberofrows
       ii = intinvperm(i)
-      IF( ii == 0 ) CYCLE
+      IF( ii == 0) THEN
+        PRINT *,'Projector InvPerm is zero:',ParEnv % MyPe, i, ii
+        CYCLE
+      END IF
       IF( GlobalInds ) THEN
-        ii = CurrentModel % Mesh % ParallelInfo % GlobalDofs(ii)
+        IF( ii > SIZE( GlobalDofs ) ) THEN
+          PRINT *,'ParEnv % MyPe, Projecor invperm is larger than globaldofs',&
+              ii, SIZE( GlobalDofs ), i, Projector % NumberOfRows
+          CYCLE
+        END IF
+        ii = GlobalDofs(ii)
+      END IF
+      IF( ii == 0) THEN
+        PRINT *,'Projector global InvPerm is zero:',ParEnv % MyPe, i, ii
+        CYCLE
       END IF
       DO j=projector % rows(i), projector % rows(i+1)-1
         jj = projector % cols(j)
+        IF( jj == 0) THEN
+          PRINT *,'Projector col is zero:',ParEnv % MyPe, i, ii, j, jj
+          CYCLE
+        END IF       
         val = projector % values(j)
         IF( GlobalInds ) THEN
-          jj = CurrentModel % Mesh % ParallelInfo % GlobalDofs(jj)
+          IF( jj > SIZE( GlobalDofs ) ) THEN
+            PRINT *,'Projecor invperm is larger than globaldofs',&
+                jj, SIZE( GlobalDofs )
+            CYCLE
+          END IF
+          jj = GlobalDofs(jj)
+          IF( jj == 0) THEN
+            PRINT *,'Projector global col is zero:',ParEnv % MyPe, i, ii, j, jj
+            CYCLE
+          END IF
           WRITE(1,*) ii,jj,ParEnv % MyPe, val
         ELSE
           WRITE(1,*) ii,jj,val
@@ -9756,7 +9922,7 @@ END SUBROUTINE GetMaxDefs
         END DO
 
         IF( GlobalInds ) THEN
-          ii = CurrentModel % Mesh % ParallelInfo % GlobalDofs(ii)
+          ii = GlobalDofs(ii)
           WRITE(1,*) ii, i, &
               projector % rows(i+1)-projector % rows(i), ParEnv % MyPe, dia, rowsum
         ELSE
