@@ -612,6 +612,7 @@ CONTAINS
     MultigridActive, VariableOutput, GlobalBubbles, HarmonicAnal, MGAlgebraic, &
     VariableGlobal, NoMatrix, IsAssemblySolver, IsCoupledSolver, IsBlockSolver, &
     IsProcedure, IsStepsSolver, LegacySolver
+    LOGICAL :: AdaptiveTime = .TRUE.
 
     CHARACTER(LEN=MAX_NAME_LEN) :: str,eq,var_name,proc_name,tmpname
 
@@ -856,8 +857,14 @@ CONTAINS
         END IF
         CALL Info('AddEquationBasics','Time stepping method is: '//TRIM(str),Level=12)
      ELSE
-        CALL Warn( 'AddEquation', '> Timestepping method < defaulted to > Implicit Euler <' )
-        CALL ListAddString( SolverParams, 'Timestepping Method', 'Implicit Euler' )
+          AdaptiveTime = ListGetLogical( CurrentModel % Simulation, &
+                    'Adaptive Timestepping' )
+          IF (AdaptiveTime) THEN
+                    Solver % Order = 2
+          ELSE
+		CALL Warn( 'AddEquation', '> Timestepping method < defaulted to > Implicit Euler <' )
+		CALL ListAddString( SolverParams, 'Timestepping Method', 'Implicit Euler' )
+	    END IF
       END IF
 
     END IF

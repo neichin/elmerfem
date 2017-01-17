@@ -717,7 +717,11 @@ CONTAINS
      LOGICAL :: ConstantDt
      TYPE(Element_t), POINTER :: Element
 !------------------------------------------------------------------------------
-
+!---------------------------- Added by CG 20170116 ----------------------------
+     INTEGER :: adaptiveOrder = 2
+     REAL(KIND=dp) :: theta
+     LOGICAL :: firstFlag
+!------------------------------------------------------------------------------
      IF ( PRESENT(UElement) ) THEN
        Element => UElement
      ELSE
@@ -786,6 +790,14 @@ CONTAINS
 !PrevSol(:,Order) needed for BDF
      Method = ListGetString( Solver % Values, 'Timestepping Method', GotIt )
 
+!------------------------Added by CG 20170116-------------------------
+     adaptiveOrder = ListGetInteger(CurrentModel % Simulation, &
+                    'Adaptive Method Order', GotIt)
+      IF (.NOT. GotIt) THEN
+        adaptiveOrder = 2
+      END IF 
+! !---------------------------------------------------------------------
+
      SELECT CASE( Method )
      CASE( 'fs' ) 
        CALL FractionalStep( n*DOFs, dt, MassMatrix, StiffMatrix, Force, &
@@ -808,6 +820,19 @@ CONTAINS
          CALL VBDFLocal( n*DOFs, dts, MassMatrix, StiffMatrix, Force, PrevSol, &
                          Order )
        END IF
+
+!-------------------Adaptive Time stepping method---------------------
+!------------------------Added by CG 20170116-------------------------
+     CASE('ab2')
+        theta = ListGetConstReal(Solver % Values, 'Adaptive Theta',GotIt)
+        CALL AdamsBashforth( n*DOFs, dt, MassMatrix, StiffMatrix, Force, &
+                PrevSol(:,1), theta, adaptiveOrder)
+     CASE('am2')
+        firstFlag = ListGetLogical( CurrentModel % Simulation, 'FirstTime Step')
+
+        CALL AdamsMoulton( n*DOFs, dt, MassMatrix, StiffMatrix, Force, &
+                PrevSol(:,2), PrevSol(:,1), firstFlag, adaptiveOrder)
+! !---------------------------------------------------------------------
 
      CASE('runge-kutta')
        CALL RungeKutta( n*DOFs, dt, MassMatrix, StiffMatrix, Force, &
