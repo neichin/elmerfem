@@ -2208,7 +2208,6 @@ END INTERFACE
       CHARACTER(LEN=MAX_NAME_LEN) :: PredMethod, CorrMethod
 
       REAL(KIND=dp) :: dt, dtOld, zeta, epsilon, beta1, beta2
-      REAL(KIND=dp) :: timeError, timeErrorMax, timeError2Norm 
 
       INTEGER :: timestep, i, j, k, n
       TYPE(Solver_t), POINTER :: Solver
@@ -2304,6 +2303,36 @@ END INTERFACE
       CALL SolveEquations( CurrentModel, dt, Transient, &
            CoupledMinIter, CoupledMaxIter, SteadyStateReached, RealTimestep )
 
+      !> Adaptive stepping control
+      CALL TimeStepController(dtOld, dt, timestep, AdaptiveOrder, zeta, epsilon, beta1, beta2)
+
+      !> Update steps counter
+      RealTimestep = RealTimestep + 1
+
+      !> Deallocate
+      DEALLOCATE(execWhen)
+ 
+!------------------------------------------------------------------------------
+    END  SUBROUTINE AdaptiveTimeStep
+!------------------------------------------------------------------------------
+
+!------------------------------------------------------------------------------
+!  The adaptive controller for Adaptive TimeStepping
+!------------------------------------------------------------------------------
+!------------------------------------------------------------------------------
+    SUBROUTINE TimeStepController(dtOld, dt, timestep, AdaptiveOrder, zeta, epsilon, beta1, beta2)
+!------------------------------------------------------------------------------
+
+
+      REAL(KIND=dp) :: dt, dtOld, zeta    
+      REAL(KIND=dp) :: epsilon, eta, beta1, beta2, gfactor
+      REAL(KIND=dp) :: timeError, timeErrorMax, timeError2Norm 
+      INTEGER :: timestep, AdaptiveOrder
+      TYPE(Solver_t), POINTER :: Solver
+
+      REAL(KIND=dp), SAVE:: etaOld
+
+
       !> Evalutate the local truncation error
       !> \tilde{H}^n is in Solver % Variable % PrevValues(:,1),
       !> H^n is in Solver % Variable % Values(:)
@@ -2326,37 +2355,6 @@ END INTERFACE
       IF (ListGetLogical( CurrentModel % Simulation,'Adaptive Error 2 Norm', Found) ) THEN
         timeError = timeError2Norm
       END IF
-
-      !> Adaptive stepping control
-      CALL TimeStepController(dtOld, dt, timestep, AdaptiveOrder, timeError, &
-              zeta, epsilon, beta1, beta2)
-
-      !> Update steps counter
-      RealTimestep = RealTimestep + 1
-
-      !> Deallocate
-      DEALLOCATE(execWhen)
- 
-!------------------------------------------------------------------------------
-    END  SUBROUTINE AdaptiveTimeStep
-!------------------------------------------------------------------------------
-
-!------------------------------------------------------------------------------
-!  The adaptive controller for Adaptive TimeStepping
-!------------------------------------------------------------------------------
-!------------------------------------------------------------------------------
-    SUBROUTINE TimeStepController(dtOld, dt, timestep, AdaptiveOrder, timeError, &
-              zeta, epsilon, beta1, beta2)
-!------------------------------------------------------------------------------
-
-
-      REAL(KIND=dp) :: dt, dtOld, zeta    
-      REAL(KIND=dp) :: epsilon, beta1, beta2, gfactor, timeError
-
-      INTEGER :: timestep, AdaptiveOrder
-
-      REAL(KIND=dp), SAVE:: eta, etaOld
-
 
       !> Get the previous time step size
       dtOld = dt
