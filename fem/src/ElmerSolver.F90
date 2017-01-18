@@ -1454,7 +1454,7 @@ END INTERFACE
 
 !------------------------ Adaptive Time stepping -----------------------
 !------------------------ Added by CG 20170116 -------------------------
-     REAL(KIND=dp) :: dtOld, epsilon, beta1, beta2     
+     REAL(KIND=dp) :: epsilon, beta1, beta2     
      CHARACTER(LEN=MAX_NAME_LEN) :: PredMethod, CorrMethod     
      INTEGER :: AdaptiveOrder
      LOGICAL :: AdaptiveTimeNew = .TRUE.
@@ -1505,8 +1505,6 @@ END INTERFACE
 		IF (.NOT. GotIt) THEN 
 		  epsilon = 1.0e-6
 		END IF
-
-		dtOld = dt
 
 		IF ( ListGetLogical( CurrentModel % Simulation, &
 			'Adaptive Method User Defined', GotIt ) ) THEN 
@@ -1654,7 +1652,7 @@ END INTERFACE
          ! Adaptive timestepping by CG
          IF ( Transient .AND. AdaptiveTimeNew ) THEN 
             CALL AdaptiveTimeStep(Transient, CoupledMinIter, CoupledMaxIter,  &
-              SteadyStateReached, RealTimestep, dtOld, dt, timestep, epsilon, &
+              SteadyStateReached, RealTimestep, dt, timestep, epsilon, &
               beta1, beta2, PredMethod, CorrMethod, AdaptiveOrder)
 !------------------------------------------------------------------------------
          ELSEIF ( Transient .AND. AdaptiveTime ) THEN 
@@ -2200,40 +2198,27 @@ END INTERFACE
 !------------------------------------------------------------------------------
 !------------------------------------------------------------------------------
   SUBROUTINE AdaptiveTimeStep(Transient, CoupledMinIter, CoupledMaxIter, SteadyStateReached, RealTimestep, &
-             dtOld, dt, timestep, epsilon, beta1, beta2, PredMethod, CorrMethod, AdaptiveOrder)
+             dt, timestep, epsilon, beta1, beta2, PredMethod, CorrMethod, AdaptiveOrder)
 !------------------------------------------------------------------------------
 
       INTEGER :: CoupledMinIter, CoupledMaxIter, RealTimestep, AdaptiveOrder
       LOGICAL :: Transient, Scanning, SteadyStateReached
       CHARACTER(LEN=MAX_NAME_LEN) :: PredMethod, CorrMethod
 
-      REAL(KIND=dp) :: dt, dtOld, zeta, epsilon, beta1, beta2
+      REAL(KIND=dp) :: dt, epsilon, beta1, beta2
 
-      INTEGER :: timestep, i, j, k, n
+      INTEGER :: timestep, i, n
       TYPE(Solver_t), POINTER :: Solver
       INTEGER, ALLOCATABLE :: execWhen(:)
       LOGICAL ::  Found
-
+      REAL(KIND=dp), SAVE :: zeta
 
       n = CurrentModel % NumberOfSolvers
-      j = 0
-      k = 0
-
-      !> Get the size of solutions
-      DO i=1,n
-         Solver => CurrentModel % Solvers(i)
-         IF ( ASSOCIATED( Solver % Variable  % Values ) ) THEN
-            IF ( ASSOCIATED( Solver % Variable % PrevValues ) ) THEN
-               j = MAX( j, SIZE( Solver % Variable % PrevValues,2 ) )
-            END IF
-            k = MAX( k, SIZE( Solver % Variable % Values ) )
-         END IF
-      END DO
 
       !> Allocate memory for twmperary solutions
       ALLOCATE(execWhen(n))
 
-      !> NOW, it's show time!!!
+      !>  Start Adaptive Time stepping method
       CALL Info('TimeStepping', '====================== Adaptive Timestepping ======================', level=3)
 !       WRITE(Message,*) 'Time Scheme in Predictor:  ', TRIM(PredMethod), ' ==== in Corrector:  ', TRIM(CorrMethod)
       WRITE(Message,*) 'The order of adaptive time scheme is:   ', AdaptiveOrder
@@ -2246,17 +2231,18 @@ END INTERFACE
         execWhen(i) = Solver % SolverExecWhen
       END DO
 
-      !> Set time stepping method to AB2
+      !> Set time stepping method for Predictor
       CALL ListAddString( CurrentModel % Simulation, 'Timestepping Method', PredMethod)
       DO i=1,CurrentModel % NumberOFSolvers
         Solver => CurrentModel % Solvers(i)
         CALL ListAddString( Solver % Values, 'Timestepping Method', PredMethod)
       END DO
 
-      !> Solve by AB2 for all the solvers only at the first time step
+      !> Solve by Predictor method for all the solvers only at the first time step
       IF ( timestep .eq. 1 ) THEN
       !               firstTime = .FALSE.
         CALL ListAddLogical( CurrentModel % Simulation, 'FirstTime Step', .TRUE.)
+        zeta = 1.0_dp
       ELSE
         CALL ListAddLogical( CurrentModel % Simulation, 'FirstTime Step', .FALSE.)
         !> Not the first time, only solve the equation of adaptive predictor 
@@ -2268,14 +2254,8 @@ END INTERFACE
         END DO
       END IF
 
-      !> Set zeta for all the solvers
-      zeta = dt / dtOld
-        IF (ListGetLogical( CurrentModel % Simulation, 'Test Output')) THEN
-
-          WRITE(Message ,*) '========== TESTING ==========', zeta
-          CALL Info('TimeStepping', Message, Level=3)
-        END IF
-
+      ! !> Set zeta for all the solvers
+      ! zeta = dt / dtOld
 
       DO i=1,CurrentModel % NumberOFSolvers
         Solver => CurrentModel % Solvers(i)
@@ -2287,10 +2267,9 @@ END INTERFACE
            CoupledMinIter, CoupledMaxIter, SteadyStateReached, RealTimestep )
 
       !> \tilde{H} is automatically in Solver % Variable % Values(L)
+      !> and H^{n-1} is put in Solver % Variable % PrevValues(L,1)
 
-      !> Put H^{n-1} in Solver % Variable % PrevValues(L,1)
-
-      !> Set time stepping method to AM2 and restore the execution flags
+      !> Set time stepping method to correction method and restore the exec flags
       CALL ListAddString( CurrentModel % Simulation, 'Timestepping Method', CorrMethod)
       DO i=1,CurrentModel % NumberOFSolvers
         Solver => CurrentModel % Solvers(i)
@@ -2299,12 +2278,12 @@ END INTERFACE
         Solver % SolverExecWhen = execWhen(i)
       END DO
 
-      !> Solve for AM2
+      !> Solve for corrector
       CALL SolveEquations( CurrentModel, dt, Transient, &
            CoupledMinIter, CoupledMaxIter, SteadyStateReached, RealTimestep )
 
       !> Adaptive stepping control
-      CALL TimeStepController(dtOld, dt, timestep, AdaptiveOrder, zeta, epsilon, beta1, beta2)
+      CALL TimeStepController(dt, zeta, timestep, AdaptiveOrder, epsilon, beta1, beta2)
 
       !> Update steps counter
       RealTimestep = RealTimestep + 1
@@ -2320,20 +2299,23 @@ END INTERFACE
 !  The adaptive controller for Adaptive TimeStepping
 !------------------------------------------------------------------------------
 !------------------------------------------------------------------------------
-    SUBROUTINE TimeStepController(dtOld, dt, timestep, AdaptiveOrder, zeta, epsilon, beta1, beta2)
+    SUBROUTINE TimeStepController(dt, zeta, timestep, AdaptiveOrder, epsilon, beta1, beta2)
 !------------------------------------------------------------------------------
 
 
-      REAL(KIND=dp) :: dt, dtOld, zeta    
-      REAL(KIND=dp) :: epsilon, eta, beta1, beta2, gfactor
+      REAL(KIND=dp), INTENT(INOUT):: dt, zeta, epsilon, beta1, beta2     
+      REAL(KIND=dp) :: eta, gfactor
       REAL(KIND=dp) :: timeError, timeErrorMax, timeError2Norm 
-      INTEGER :: timestep, AdaptiveOrder
+      INTEGER, INTENT(IN) :: timestep, AdaptiveOrder
+      INTEGER :: i
+      LOGICAL ::  Found
+
       TYPE(Solver_t), POINTER :: Solver
 
-      REAL(KIND=dp), SAVE:: etaOld
+      REAL(KIND=dp), SAVE:: etaOld, dtOld
 
 
-      !> Evalutate the local truncation error
+
       !> \tilde{H}^n is in Solver % Variable % PrevValues(:,1),
       !> H^n is in Solver % Variable % Values(:)
       timeErrorMax = 0.0
@@ -2341,7 +2323,7 @@ END INTERFACE
 
       DO i=1,CurrentModel % NumberOFSolvers
         Solver => CurrentModel % Solvers(i)
-        !> Find the Solver for adaptive predictor
+        !> Find the Solver for adaptive predictor, there should be only one solver as predictor
         IF (ListGetLogical( Solver % Values,'Adaptive Predictor', Found) ) THEN
 
           !> Compute the error  (H-\tilde{H)
@@ -2356,14 +2338,12 @@ END INTERFACE
         timeError = timeError2Norm
       END IF
 
-      !> Get the previous time step size
-      dtOld = dt
-
-      !> Compute eta
+      !> estimate the local truncation error eta
       IF (timestep > 1) THEN
         IF (AdaptiveOrder == 1) THEN
           eta = timeError / dt / 2.0_dp
         ELSE
+          !> Compute zeta 
           eta = timeError * zeta / dt / (zeta + 1.0_dp) / 3.0_dp
         END IF
       ELSE
@@ -2371,7 +2351,9 @@ END INTERFACE
         etaOld = eta
       END IF
 
-      !> Update time step and eta
+      !> Update the next time step and eta
+      dtOld = dt
+
       IF ((eta .NE. 0.0_dp) .AND. (etaOld .NE. 0.0_dp)) THEN 
         gfactor = ((epsilon/eta)**beta1) * ((epsilon/etaOld)**beta2)
         CALL TimeStepLimiter(dtOld, dt, gfactor)
@@ -2379,6 +2361,7 @@ END INTERFACE
         dt = dtOld
       END IF
       etaOld = eta
+      zeta = dt / dtOld
 
       ! Overwrite step size for the whole simulation
       CALL ListAddConstReal( CurrentModel % Simulation, 'Timestep Size', dt)
@@ -2390,7 +2373,7 @@ END INTERFACE
       CLOSE(135)
 
       !> Output
-      CALL Info('TimeStepping', "==================== Adaptive ========================", Level=3)
+      CALL Info('TimeStepping', "============ Adaptive ============", Level=3)
       WRITE (Message,*) "current dt=", dtOld, "next dt=",  dt
       CALL Info('TimeStepping', Message, Level=3)
       WRITE (Message,*) "zeta=", zeta, "eta=",  eta
@@ -2406,7 +2389,9 @@ END INTERFACE
 !------------------------------------------------------------------------------
     SUBROUTINE TimeStepLimiter(dtOld, dt, gfactor, k)
 !------------------------------------------------------------------------------
-      REAL(KIND=dp) :: dtOld, dt, gfactor, xfactor
+      REAL(KIND=dp), INTENT(IN) :: dtOld, gfactor
+      REAL(KIND=dp), INTENT(OUT) :: dt
+      REAL(KIND=dp) :: xfactor
       INTEGER, OPTIONAL :: k 
 
       IF( PRESENT(k) ) THEN
@@ -2419,8 +2404,6 @@ END INTERFACE
 !------------------------------------------------------------------------------
     END SUBROUTINE TimeStepLimiter
 !------------------------------------------------------------------------------
-
-
 
 
 !------------------------------------------------------------------------------
