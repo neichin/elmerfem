@@ -718,9 +718,9 @@ CONTAINS
      TYPE(Element_t), POINTER :: Element
 !------------------------------------------------------------------------------
 !---------------------------- Added by CG 20170116 ----------------------------
-     INTEGER :: adaptiveOrder = 2
-     REAL(KIND=dp) :: theta
-     LOGICAL :: firstFlag
+     INTEGER :: adaptiveOrder = 2       !< default order of Adaptive Timestepping
+     REAL(KIND=dp) :: zeta              !< zeta parameter in Adams-Bashforth 
+     LOGICAL :: firstFlag               !< First time AM2 is Implicit Euler
 !------------------------------------------------------------------------------
      IF ( PRESENT(UElement) ) THEN
        Element => UElement
@@ -824,9 +824,9 @@ CONTAINS
 !-------------------Adaptive Time stepping method---------------------
 !------------------------Added by CG 20170116-------------------------
      CASE('ab2')
-        theta = ListGetConstReal(Solver % Values, 'Adaptive Theta',GotIt)
+        zeta = ListGetConstReal(Solver % Values, 'Adaptive Zeta',GotIt)
         CALL AdamsBashforth( n*DOFs, dt, MassMatrix, StiffMatrix, Force, &
-                PrevSol(:,1), theta, adaptiveOrder)
+                PrevSol(:,1), zeta, adaptiveOrder)
      CASE('am2')
         firstFlag = ListGetLogical( CurrentModel % Simulation, 'FirstTime Step')
 
@@ -7239,7 +7239,12 @@ END FUNCTION SearchNodeL
 
          CASE('fs')
            Solver % Beta = 0.5d0
-
+!------------------------Edit by CG 20170116-------------------------
+         CASE('ab2')
+           Solver % Beta = 0.0d0
+         CASE('am2')
+           Solver % Beta = 1.0d0
+!--------------------------------------------------------------------
          CASE('newmark')
            Solver % Beta = ListGetConstReal( Solver % Values, 'Newmark Beta', GotIt )
            IF ( .NOT. GotIt ) THEN

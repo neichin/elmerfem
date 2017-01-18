@@ -125,10 +125,10 @@ CONTAINS
 !> 
 !------------------------------------------------------------------------------
    SUBROUTINE AdamsBashforth( N, dt, MassMatrix, StiffMatrix, &
-                   Force, PrevSolution, theta, adaptiveOrder)
+                   Force, PrevSolution, zeta, adaptiveOrder)
 !------------------------------------------------------------------------------
     INTEGER :: N    ! Size of the unknowns
-    REAL(KIND=dp) :: Force(:),PrevSolution(:),dt, theta
+    REAL(KIND=dp) :: Force(:),PrevSolution(:),dt, zeta
     REAL(KIND=dp) :: MassMatrix(:,:),StiffMatrix(:,:)
     TYPE(Element_t), POINTER :: Element
     TYPE(elementdata_t), POINTER :: tempRes
@@ -176,8 +176,8 @@ CONTAINS
       Element % propertydata % values(i) = curr_res
       Element % propertydata % values(i+NB1) = Force(i)
      
-      Force(i) = Force(i) - s_curr  + m_curr + 0.5_dp * theta * (Force(i) - preForce) + &
-                      0.5_dp * theta * (curr_res - residual)
+      Force(i) = Force(i) - s_curr  + m_curr + 0.5_dp * zeta * (Force(i) - preForce) + &
+                      0.5_dp * zeta * (curr_res - residual)
 
       DO j=1,NB2
          StiffMatrix(i,j) =   (1/dt) * MassMatrix(i,j)

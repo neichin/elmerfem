@@ -2207,7 +2207,7 @@ END INTERFACE
       LOGICAL :: Transient, Scanning, SteadyStateReached
       CHARACTER(LEN=MAX_NAME_LEN) :: PredMethod, CorrMethod
 
-      REAL(KIND=dp) :: dt, dtOld, theta, epsilon, beta1, beta2, gfactor
+      REAL(KIND=dp) :: dt, dtOld, zeta, epsilon, beta1, beta2, gfactor
       REAL(KIND=dp) :: timeError, timeErrorMax, timeError2Norm 
 
       INTEGER :: timestep, i, j, k, n
@@ -2272,18 +2272,18 @@ END INTERFACE
         END DO
       END IF
 
-      !> Set theta for all the solvers
-      theta = dt / dtOld
+      !> Set zeta for all the solvers
+      zeta = dt / dtOld
         IF (ListGetLogical( CurrentModel % Simulation, 'Test Output')) THEN
 
-          WRITE(Message ,*) '========== TESTING ==========', theta
+          WRITE(Message ,*) '========== TESTING ==========', zeta
           CALL Info('TimeStepping', Message, Level=3)
         END IF
 
 
       DO i=1,CurrentModel % NumberOFSolvers
         Solver => CurrentModel % Solvers(i)
-        CALL ListAddConstReal( Solver % Values, 'Adaptive Theta', theta)
+        CALL ListAddConstReal( Solver % Values, 'Adaptive Zeta', zeta)
       END DO
 
       !> Solve
@@ -2340,7 +2340,7 @@ END INTERFACE
         IF (AdaptiveOrder == 1) THEN
           eta = timeError / dt / 2.0_dp
         ELSE
-          eta = timeError * theta / dt / (theta + 1.0_dp) / 3.0_dp
+          eta = timeError * zeta / dt / (zeta + 1.0_dp) / 3.0_dp
         END IF
       ELSE
         eta = timeError / dt / 2.0_dp
@@ -2371,7 +2371,7 @@ END INTERFACE
       CALL Info('TimeStepping', "==================== Adaptive ========================", Level=3)
       WRITE (Message,*) "current dt=", dtOld, "next dt=",  dt
       CALL Info('TimeStepping', Message, Level=3)
-      WRITE (Message,*) "theta=", theta, "eta=",  eta
+      WRITE (Message,*) "zeta=", zeta, "eta=",  eta
       CALL Info('TimeStepping', Message, Level=4)
 
       !> Deallocate
