@@ -2207,7 +2207,7 @@ END INTERFACE
       LOGICAL :: Transient, Scanning, SteadyStateReached
       CHARACTER(LEN=MAX_NAME_LEN) :: PredMethod, CorrMethod
 
-      REAL(KIND=dp) :: dt, dtOld, zeta, epsilon, beta1, beta2, gfactor
+      REAL(KIND=dp) :: dt, dtOld, zeta, epsilon, beta1, beta2
       REAL(KIND=dp) :: timeError, timeErrorMax, timeError2Norm 
 
       INTEGER :: timestep, i, j, k, n
@@ -2215,9 +2215,6 @@ END INTERFACE
       INTEGER, ALLOCATABLE :: execWhen(:)
       LOGICAL ::  Found
 
-      REAL(KIND=dp), SAVE:: eta, etaOld
-
-      TYPE(Variable_t), POINTER ::  approximationLevel
 
       n = CurrentModel % NumberOfSolvers
       j = 0
@@ -2324,16 +2321,43 @@ END INTERFACE
         END IF 
       END DO
 
-
-      !> Adaptive stepping control
-      !> Get the previous time step size
-      dtOld = dt
-
       timeError = timeErrorMax
       ! Choose norm: inf-norm or 2-norm
       IF (ListGetLogical( CurrentModel % Simulation,'Adaptive Error 2 Norm', Found) ) THEN
         timeError = timeError2Norm
       END IF
+
+      !> Adaptive stepping control
+      CALL TimeStepController(dtOld, dt, timestep, AdaptiveOrder, timeError, &
+              zeta, RealTimestep)
+
+
+      !> Deallocate
+      DEALLOCATE(execWhen)
+ 
+!------------------------------------------------------------------------------
+    END  SUBROUTINE AdaptiveTimeStep
+!------------------------------------------------------------------------------
+
+!------------------------------------------------------------------------------
+!  The adaptive controller for Adaptive TimeStepping
+!------------------------------------------------------------------------------
+!------------------------------------------------------------------------------
+    SUBROUTINE TimeStepController(dtOld, dt, timestep, AdaptiveOrder, timeError, &
+              zeta, RealTimestep)
+!------------------------------------------------------------------------------
+
+
+      REAL(KIND=dp) :: dt, dtOld, zeta    
+      REAL(KIND=dp) :: epsilon, beta1, beta2, gfactor, timeError
+
+      INTEGER :: timestep, RealTimestep, AdaptiveOrder
+
+      REAL(KIND=dp), SAVE:: eta, etaOld
+
+
+      !> Get the previous time step size
+      dtOld = dt
 
       !> Compute eta
       IF (timestep > 1) THEN
@@ -2364,7 +2388,7 @@ END INTERFACE
 
       !> Save the errors!                         
       OPEN (unit=135, file="ErrorAdaptive.dat", POSITION='APPEND')
-      WRITE(135, *) dtOld, eta, timeErrorMax, timeError2Norm                                                
+      WRITE(135, *) dtOld, eta, timeError                                                
       CLOSE(135)
 
       !> Output
@@ -2374,11 +2398,8 @@ END INTERFACE
       WRITE (Message,*) "zeta=", zeta, "eta=",  eta
       CALL Info('TimeStepping', Message, Level=4)
 
-      !> Deallocate
-      DEALLOCATE(execWhen)
- 
 !------------------------------------------------------------------------------
-    END  SUBROUTINE AdaptiveTimeStep
+    END  SUBROUTINE TimeStepController
 !------------------------------------------------------------------------------
 
 !------------------------------------------------------------------------------
