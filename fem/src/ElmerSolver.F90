@@ -2329,8 +2329,10 @@ END INTERFACE
 
       !> Adaptive stepping control
       CALL TimeStepController(dtOld, dt, timestep, AdaptiveOrder, timeError, &
-              zeta, RealTimestep)
+              zeta, epsilon, beta1, beta2)
 
+      !> Update steps counter
+      RealTimestep = RealTimestep + 1
 
       !> Deallocate
       DEALLOCATE(execWhen)
@@ -2344,14 +2346,14 @@ END INTERFACE
 !------------------------------------------------------------------------------
 !------------------------------------------------------------------------------
     SUBROUTINE TimeStepController(dtOld, dt, timestep, AdaptiveOrder, timeError, &
-              zeta, RealTimestep)
+              zeta, epsilon, beta1, beta2)
 !------------------------------------------------------------------------------
 
 
       REAL(KIND=dp) :: dt, dtOld, zeta    
       REAL(KIND=dp) :: epsilon, beta1, beta2, gfactor, timeError
 
-      INTEGER :: timestep, RealTimestep, AdaptiveOrder
+      INTEGER :: timestep, AdaptiveOrder
 
       REAL(KIND=dp), SAVE:: eta, etaOld
 
@@ -2371,22 +2373,20 @@ END INTERFACE
         etaOld = eta
       END IF
 
-      !> Update next time step
+      !> Update time step and eta
       IF ((eta .NE. 0.0_dp) .AND. (etaOld .NE. 0.0_dp)) THEN 
         gfactor = ((epsilon/eta)**beta1) * ((epsilon/etaOld)**beta2)
         CALL TimeStepLimiter(dtOld, dt, gfactor)
       ELSE 
         dt = dtOld
       END IF
-
-      CALL ListAddConstReal( CurrentModel % Simulation, 'Timestep Size', dt)
-      sSize(1) = dt
       etaOld = eta
 
-      !> Update counters
-      RealTimestep = RealTimestep + 1
+      ! Overwrite step size for the whole simulation
+      CALL ListAddConstReal( CurrentModel % Simulation, 'Timestep Size', dt)
+      sSize(1) = dt
 
-      !> Save the errors!                         
+      !> Save the time errors!                         
       OPEN (unit=135, file="ErrorAdaptive.dat", POSITION='APPEND')
       WRITE(135, *) dtOld, eta, timeError                                                
       CLOSE(135)
